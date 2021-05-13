@@ -3,6 +3,10 @@ import QueryCore from "vega-transform-omnisci-core";
 var MapdCon = require("@mapd/connector/dist/browser-connector");
 import { specRewrite } from "./spec_rewrite"
 var htmldiff = require("./htmldiff")
+import { view2dot } from './view2dot'
+var hpccWasm = window["@hpcc-js/wasm"];
+
+
 
 const connection = new MapdCon()
   .protocol("https")
@@ -12,7 +16,62 @@ const connection = new MapdCon()
   .user("mapd")
   .password("HyperInteractive");
 
-const table = "flights_donotmodify";
+connection.connectAsync().then(session => {
+  // assign session to OmniSci Core transform
+  QueryCore.session(session);
+  const oldSpec = "<pre class=\"prettyprint\">" + JSON.stringify(spec, null, 4) + "</pre>"
+
+
+  const newspec = specRewrite(spec)
+  rename(newspec.data, "querycore")
+
+  vega.transforms["querycore"] = QueryCore;
+
+  console.log(newspec, "rewrite");
+
+
+  const runtime = vega.parse(newspec);
+  console.log(runtime, "runtime");
+
+  const view = new vega.View(runtime)
+    .logLevel(vega.Info)
+    .renderer("svg")
+    .initialize(document.querySelector("#view"));
+  console.log(view, "runtime");
+
+
+  view.runAsync();
+
+  // assign view and vega to window so we can debug them
+  window["vega"] = vega;
+  window["view"] = view;
+  const newSpec = "<pre class=\"prettyprint\">" + JSON.stringify(spec, null, 4) + "</pre>"
+  let output = htmldiff(oldSpec, newSpec);
+
+  // Show HTML diff output as HTML (crazy right?)!
+  document.getElementById("output").innerHTML = output;
+
+  view.runAfter(view => {
+    const dot = `${view2dot(view)}`
+    hpccWasm.graphviz.layout(dot, "svg", "dot").then(svg => {
+      const placeholder = document.getElementById("graph-placeholder");
+      placeholder.innerHTML = svg;
+    });
+  })
+
+});
+
+
+function rename(dataSpec, type) {
+  for (var i = 0; i < dataSpec.length; i++) {
+    var spec = dataSpec[i]
+    for (const transform of spec.transform) {
+      if (transform.type === "dbtransform") transform.type = type
+
+    }
+  }
+}
+
 const spec: vega.Spec = {
   "$schema": "https://vega.github.io/schema/vega/v5.json",
   "autosize": "pad",
@@ -209,49 +268,3 @@ const spec: vega.Spec = {
     }
   }
 };
-
-connection.connectAsync().then(session => {
-  // assign session to OmniSci Core transform
-  QueryCore.session(session);
-  const oldSpec = "<pre class=\"prettyprint\">" + JSON.stringify(spec, null, 4) + "</pre>"
-
-
-  const newspec = specRewrite(spec)
-  rename(newspec.data, "querycore")
-
-  vega.transforms["querycore"] = QueryCore;
-
-  console.log(newspec, "rewrite");
-
-
-  const runtime = vega.parse(newspec);
-  console.log(runtime, "runtime");
-
-  const view = new vega.View(runtime)
-    .logLevel(vega.Info)
-    .renderer("svg")
-    .initialize(document.querySelector("#view"));
-  console.log(view, "runtime");
-
-
-  view.runAsync();
-
-  // assign view and vega to window so we can debug them
-  window["vega"] = vega;
-  window["view"] = view;
-  const newSpec = "<pre class=\"prettyprint\">" + JSON.stringify(spec, null, 4) + "</pre>"
-  let output = htmldiff(oldSpec, newSpec);
-
-  // Show HTML diff output as HTML (crazy right?)!
-  document.getElementById("output").innerHTML = output;
-});
-
-function rename(dataSpec, type) {
-  for (var i = 0; i < dataSpec.length; i++) {
-    var spec = dataSpec[i]
-    for (const transform of spec.transform) {
-      if (transform.type === "dbtransform") transform.type = type
-
-    }
-  }
-}
